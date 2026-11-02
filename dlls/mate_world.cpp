@@ -127,32 +127,32 @@ static void Mate_Prune(CBaseEntity *keep)
 	}
 }
 
-/* a clear spot beside the player (right first, then left), on the floor */
-static void Mate_SpotNear(CBasePlayer *player, Vector *out)
+/* a clear spot beside the player (right, left, then behind): 1 if one was found */
+static int Mate_SpotNear(CBasePlayer *player, Vector *out)
 {
 	float forward[3];
 	float right[3];
+	Vector offsets[3];
+	Vector start = player->pev->origin + Vector(0.0f, 0.0f, 36.0f);
 	TraceResult trace;
-	Vector start = player->pev->origin + Vector(0.0f, 0.0f, 32.0f);
-	int side;
+	int index;
 
 	g_engfuncs.pfnAngleVectors(player->pev->angles, forward, right, NULL);
-	for (side = 1; ; side = -side)
+	offsets[0] = Vector(right[0], right[1], 0.0f) * 56.0f
+		+ Vector(forward[0], forward[1], 0.0f) * 8.0f;
+	offsets[1] = Vector(right[0], right[1], 0.0f) * -56.0f
+		+ Vector(forward[0], forward[1], 0.0f) * 8.0f;
+	offsets[2] = Vector(forward[0], forward[1], 0.0f) * -56.0f;
+	for (index = 0; index < 3; index++)
 	{
-		*out = player->pev->origin
-			+ Vector(right[0], right[1], 0.0f) * (40.0f * side)
-			+ Vector(forward[0], forward[1], 0.0f) * 8.0f
-			+ Vector(0.0f, 0.0f, 8.0f);
-		UTIL_TraceLine(start, *out + Vector(0.0f, 0.0f, 24.0f), ignore_monsters,
-			ENT(player->pev), &trace);
+		*out = player->pev->origin + offsets[index] + Vector(0.0f, 0.0f, 8.0f);
+		UTIL_TraceHull(start, *out + Vector(0.0f, 0.0f, 36.0f), ignore_monsters,
+			human_hull, ENT(player->pev), &trace);
 		if (trace.flFraction >= 1.0f)
-			return;
-		if (side < 0)
-		{
-			*out = player->pev->origin;
-			return;
-		}
+			return 1;
 	}
+	*out = player->pev->origin;
+	return 0;
 }
 
 static void Mate_Spawn(CBasePlayer *player)
@@ -163,13 +163,14 @@ static void Mate_Spawn(CBasePlayer *player)
 
 	if (Mate_Get())
 		return;
+	if (!Mate_SpotNear(player, &origin))
+		return;
 	Mate_ReadModel();
 	ed = CREATE_NAMED_ENTITY(MAKE_STRING("monster_barney"));
 	if (!ed)
 		return;
 	ent = CBaseEntity::Instance(ed);
 	ent->pev->targetname = MAKE_STRING(MATE_TARGETNAME);
-	Mate_SpotNear(player, &origin);
 	ent->pev->origin = origin;
 	ent->pev->angles = player->pev->angles;
 	DispatchSpawn(ed);
@@ -278,13 +279,15 @@ void Mate_WorldFrame(void)
 		{
 			Vector spot;
 
-			Mate_SpotNear(player, &spot);
-			UTIL_SetOrigin(mate->pev, spot);
-			DROP_TO_FLOOR(ENT(mate->pev));
-			mate->pev->velocity = Vector(0.0f, 0.0f, 0.0f);
-			mate->ClearSchedule();
-			g_mate_last_origin = mate->pev->origin;
-			g_mate_stuck_at = 0.0f;
+			if (Mate_SpotNear(player, &spot))
+			{
+				UTIL_SetOrigin(mate->pev, spot);
+				DROP_TO_FLOOR(ENT(mate->pev));
+				mate->pev->velocity = Vector(0.0f, 0.0f, 0.0f);
+				mate->ClearSchedule();
+				g_mate_last_origin = mate->pev->origin;
+				g_mate_stuck_at = 0.0f;
+			}
 		}
 		return;
 	}
