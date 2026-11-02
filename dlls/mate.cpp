@@ -332,6 +332,7 @@ void Mate_Frame(void)
 		if (stop && g_msg_stop)
 		{
 			MESSAGE_BEGIN(MSG_ALL, g_msg_stop, NULL);
+			WRITE_BYTE(0);
 			MESSAGE_END();
 		}
 		if (done && g_msg_say)

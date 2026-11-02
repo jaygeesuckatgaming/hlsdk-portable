@@ -26,6 +26,7 @@ static int g_mate_index = 0;
 static float g_mate_spawn_at = 0.0f;
 static Vector g_mate_last_origin = Vector(0.0f, 0.0f, 0.0f);
 static float g_mate_stuck_at = 0.0f;
+static bool g_mate_hold = false;
 
 static CBasePlayer *Mate_Player(void)
 {
@@ -76,6 +77,7 @@ static void Mate_Spawn(CBasePlayer *player)
 	g_mate_index = ENTINDEX(ed);
 	g_mate_last_origin = ent->pev->origin;
 	g_mate_stuck_at = 0.0f;
+	g_mate_hold = false;
 	ALERT(at_console, "[mate] %s is here\n", MATE_NAME);
 }
 
@@ -85,6 +87,7 @@ void Mate_WorldReset(void)
 	g_mate_spawn_at = 0.0f;
 	g_mate_last_origin = Vector(0.0f, 0.0f, 0.0f);
 	g_mate_stuck_at = 0.0f;
+	g_mate_hold = false;
 }
 
 /* once a frame: keep the mate in the world (spawned near the player, back 10 s after dying) */
@@ -124,7 +127,7 @@ void Mate_WorldFrame(void)
 		g_mate_last_origin = origin;
 
 		/* (told to hold, but he's walking off: keep up anyway) */
-		if (!mate->IsFollowing() && distance > 500.0f)
+		if (!g_mate_hold && !mate->IsFollowing() && distance > 500.0f)
 			mate->StartFollowing(player);
 
 		/* (left behind, or stuck on a lift or a ledge: come back to him) */
@@ -164,8 +167,18 @@ void Mate_WorldOrder(const char *json)
 	if (strstr(json, "\"action\":\"follow\""))
 	{
 		ALERT(at_console, "[mate] order: follow\n");
+		g_mate_hold = false;
 		if (mate && player)
 			mate->StartFollowing(player);
+	}
+	else if (strstr(json, "\"action\":\"stay\"") || strstr(json, "\"action\":\"wait\""))
+	{
+		ALERT(at_console, "[mate] order: hold\n");
+		if (mate)
+		{
+			mate->StopFollowing(TRUE);
+			g_mate_hold = true;
+		}
 	}
 	else if (strstr(json, "\"action\":\"attack\""))
 	{
@@ -174,6 +187,30 @@ void Mate_WorldOrder(const char *json)
 		edict_t *target = index > 0 ? INDEXENT(index) : NULL;
 
 		ALERT(at_console, "[mate] order: attack\n");
+		g_mate_hold = false;
+		/* (told to attack without a target: the nearest thing hostile to the player) */
+		if (mate && (!target || target->free) && player)
+		{
+			CBaseEntity *found = NULL;
+			float best = 2000.0f;
+
+			target = NULL;
+			while ((found = UTIL_FindEntityInSphere(found, player->pev->origin, 2000.0f)) != NULL)
+			{
+				CBaseMonster *monster = found->MyMonsterPointer();
+				float distance;
+
+				if (!monster || !monster->IsAlive() ||
+					monster->IRelationship(player) != R_HT)
+					continue;
+				distance = (found->pev->origin - player->pev->origin).Length();
+				if (distance < best)
+				{
+					best = distance;
+					target = found->edict();
+				}
+			}
+		}
 		if (mate && target && !target->free)
 		{
 			mate->m_hEnemy = CBaseEntity::Instance(target);
