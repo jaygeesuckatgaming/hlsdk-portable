@@ -182,6 +182,11 @@ static void Mate_Spawn(CBasePlayer *player)
 		ent->pev->origin.z += 36.0f;
 		ent->pev->view_ofs = Vector(0.0f, 0.0f, 28.0f);
 	}
+	else
+	{
+		/* (SET_MODEL resets the hull from the model: give the walker its own back) */
+		UTIL_SetSize(ent->pev, VEC_HUMAN_HULL_MIN, VEC_HUMAN_HULL_MAX);
+	}
 	DROP_TO_FLOOR(ENT(ent->pev));
 	((CTalkMonster *)ent)->StartFollowing(player);
 	g_mate_index = ENTINDEX(ed);
@@ -287,6 +292,7 @@ void Mate_WorldFrame(void)
 				mate->ClearSchedule();
 				g_mate_last_origin = mate->pev->origin;
 				g_mate_stuck_at = 0.0f;
+				ALERT(at_console, "[mate] caught up\n");
 			}
 		}
 		return;
