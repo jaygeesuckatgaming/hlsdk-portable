@@ -100,6 +100,7 @@ void Mate_WorldFrame(void)
 		Vector origin;
 		float moved;
 		float distance;
+		bool player_moving;
 
 		if (!mate->IsAlive())
 		{
@@ -110,21 +111,26 @@ void Mate_WorldFrame(void)
 		origin = mate->pev->origin;
 		moved = (origin - g_mate_last_origin).Length();
 		distance = (origin - player->pev->origin).Length();
-		if (moved < 2.0f)
+		player_moving = player->pev->velocity.Length() > 20.0f;
+		if (player_moving && moved < 2.0f)
 		{
 			if (g_mate_stuck_at <= 0.0f)
 				g_mate_stuck_at = gpGlobals->time;
 		}
-		else
+		else if (moved >= 2.0f)
 		{
 			g_mate_stuck_at = 0.0f;
 		}
 		g_mate_last_origin = origin;
 
+		/* (told to hold, but he's walking off: keep up anyway) */
+		if (!mate->IsFollowing() && distance > 500.0f)
+			mate->StartFollowing(player);
+
 		/* (left behind, or stuck on a lift or a ledge: come back to him) */
 		if (mate->IsFollowing() && (distance > 1500.0f ||
-			(g_mate_stuck_at > 0.0f && distance > 400.0f &&
-			 gpGlobals->time - g_mate_stuck_at > 5.0f)))
+			(g_mate_stuck_at > 0.0f && distance > 120.0f &&
+			 gpGlobals->time - g_mate_stuck_at > 2.0f)))
 		{
 			float forward[3];
 			Vector spot;
@@ -160,12 +166,6 @@ void Mate_WorldOrder(const char *json)
 		ALERT(at_console, "[mate] order: follow\n");
 		if (mate && player)
 			mate->StartFollowing(player);
-	}
-	else if (strstr(json, "\"action\":\"stay\"") || strstr(json, "\"action\":\"wait\""))
-	{
-		ALERT(at_console, "[mate] order: hold\n");
-		if (mate)
-			mate->StopFollowing(TRUE);
 	}
 	else if (strstr(json, "\"action\":\"attack\""))
 	{
@@ -248,9 +248,7 @@ int Mate_WorldState(char *out, int size)
 		snprintf(enemies, sizeof(enemies), "none in sight");
 
 	snprintf(actions, sizeof(actions),
-		"{\"name\":\"follow\",\"description\":\"follows {player}\"},"
-		"{\"name\":\"stay\",\"description\":\"holds position\"},"
-		"{\"name\":\"wait\",\"description\":\"waits and watches\"}%s",
+		"{\"name\":\"follow\",\"description\":\"follows {player}\"}%s",
 		options[0] ? ",{\"name\":\"attack\",\"description\":\"attacks an enemy\",\"options\":{" : "");
 	if (options[0])
 	{
