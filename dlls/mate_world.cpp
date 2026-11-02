@@ -127,11 +127,38 @@ static void Mate_Prune(CBaseEntity *keep)
 	}
 }
 
+/* a clear spot beside the player (right first, then left), on the floor */
+static void Mate_SpotNear(CBasePlayer *player, Vector *out)
+{
+	float forward[3];
+	float right[3];
+	TraceResult trace;
+	Vector start = player->pev->origin + Vector(0.0f, 0.0f, 32.0f);
+	int side;
+
+	g_engfuncs.pfnAngleVectors(player->pev->angles, forward, right, NULL);
+	for (side = 1; ; side = -side)
+	{
+		*out = player->pev->origin
+			+ Vector(right[0], right[1], 0.0f) * (40.0f * side)
+			+ Vector(forward[0], forward[1], 0.0f) * 8.0f
+			+ Vector(0.0f, 0.0f, 8.0f);
+		UTIL_TraceLine(start, *out + Vector(0.0f, 0.0f, 24.0f), ignore_monsters,
+			ENT(player->pev), &trace);
+		if (trace.flFraction >= 1.0f)
+			return;
+		if (side < 0)
+		{
+			*out = player->pev->origin;
+			return;
+		}
+	}
+}
+
 static void Mate_Spawn(CBasePlayer *player)
 {
 	edict_t *ed;
 	CBaseEntity *ent;
-	float forward[3];
 	Vector origin;
 
 	if (Mate_Get())
@@ -142,13 +169,18 @@ static void Mate_Spawn(CBasePlayer *player)
 		return;
 	ent = CBaseEntity::Instance(ed);
 	ent->pev->targetname = MAKE_STRING(MATE_TARGETNAME);
-	g_engfuncs.pfnAngleVectors(player->pev->angles, forward, NULL, NULL);
-	origin = player->pev->origin + Vector(forward[0], forward[1], 0.0f) * 48.0f
-		+ Vector(0.0f, 0.0f, 8.0f);
+	Mate_SpotNear(player, &origin);
 	ent->pev->origin = origin;
 	ent->pev->angles = player->pev->angles;
 	DispatchSpawn(ed);
 	SET_MODEL(ENT(ent->pev), (char *)g_mate_model);
+	/* (player models are built around their middle, NPCs around their feet) */
+	if (strncmp(g_mate_model, "models/player/", 14) == 0)
+	{
+		UTIL_SetSize(ent->pev, Vector(-16.0f, -16.0f, -36.0f), Vector(16.0f, 16.0f, 36.0f));
+		ent->pev->origin.z += 36.0f;
+		ent->pev->view_ofs = Vector(0.0f, 0.0f, 28.0f);
+	}
 	DROP_TO_FLOOR(ENT(ent->pev));
 	((CTalkMonster *)ent)->StartFollowing(player);
 	g_mate_index = ENTINDEX(ed);
@@ -244,11 +276,9 @@ void Mate_WorldFrame(void)
 			(g_mate_stuck_at > 0.0f && distance > 120.0f &&
 			 gpGlobals->time - g_mate_stuck_at > 2.0f)))
 		{
-			float forward[3];
 			Vector spot;
 
-			g_engfuncs.pfnAngleVectors(player->pev->angles, forward, NULL, NULL);
-			spot = player->pev->origin + Vector(forward[0], forward[1], 0.0f) * 64.0f;
+			Mate_SpotNear(player, &spot);
 			UTIL_SetOrigin(mate->pev, spot);
 			DROP_TO_FLOOR(ENT(mate->pev));
 			mate->pev->velocity = Vector(0.0f, 0.0f, 0.0f);
