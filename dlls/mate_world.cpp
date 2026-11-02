@@ -24,6 +24,8 @@
 
 static int g_mate_index = 0;
 static float g_mate_spawn_at = 0.0f;
+static Vector g_mate_last_origin = Vector(0.0f, 0.0f, 0.0f);
+static float g_mate_stuck_at = 0.0f;
 
 static CBasePlayer *Mate_Player(void)
 {
@@ -72,6 +74,8 @@ static void Mate_Spawn(CBasePlayer *player)
 	DROP_TO_FLOOR(ENT(ent->pev));
 	((CTalkMonster *)ent)->StartFollowing(player);
 	g_mate_index = ENTINDEX(ed);
+	g_mate_last_origin = ent->pev->origin;
+	g_mate_stuck_at = 0.0f;
 	ALERT(at_console, "[mate] %s is here\n", MATE_NAME);
 }
 
@@ -79,6 +83,8 @@ void Mate_WorldReset(void)
 {
 	g_mate_index = 0;
 	g_mate_spawn_at = 0.0f;
+	g_mate_last_origin = Vector(0.0f, 0.0f, 0.0f);
+	g_mate_stuck_at = 0.0f;
 }
 
 /* once a frame: keep the mate in the world (spawned near the player, back 10 s after dying) */
@@ -91,10 +97,46 @@ void Mate_WorldFrame(void)
 		return;
 	if (mate)
 	{
+		Vector origin;
+		float moved;
+		float distance;
+
 		if (!mate->IsAlive())
 		{
 			g_mate_index = 0;
 			g_mate_spawn_at = gpGlobals->time + 10.0f;
+			return;
+		}
+		origin = mate->pev->origin;
+		moved = (origin - g_mate_last_origin).Length();
+		distance = (origin - player->pev->origin).Length();
+		if (moved < 2.0f)
+		{
+			if (g_mate_stuck_at <= 0.0f)
+				g_mate_stuck_at = gpGlobals->time;
+		}
+		else
+		{
+			g_mate_stuck_at = 0.0f;
+		}
+		g_mate_last_origin = origin;
+
+		/* (left behind, or stuck on a lift or a ledge: come back to him) */
+		if (mate->IsFollowing() && (distance > 1500.0f ||
+			(g_mate_stuck_at > 0.0f && distance > 400.0f &&
+			 gpGlobals->time - g_mate_stuck_at > 5.0f)))
+		{
+			float forward[3];
+			Vector spot;
+
+			g_engfuncs.pfnAngleVectors(player->pev->angles, forward, NULL, NULL);
+			spot = player->pev->origin + Vector(forward[0], forward[1], 0.0f) * 64.0f;
+			UTIL_SetOrigin(mate->pev, spot);
+			DROP_TO_FLOOR(ENT(mate->pev));
+			mate->pev->velocity = Vector(0.0f, 0.0f, 0.0f);
+			mate->ClearSchedule();
+			g_mate_last_origin = mate->pev->origin;
+			g_mate_stuck_at = 0.0f;
 		}
 		return;
 	}
