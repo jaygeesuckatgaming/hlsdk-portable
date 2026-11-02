@@ -5,6 +5,7 @@ set HERE=%~dp0
 
 if not exist "%HL%\hlm8\dlls" mkdir "%HL%\hlm8\dlls"
 if not exist "%HL%\hlm8\cl_dlls" mkdir "%HL%\hlm8\cl_dlls"
+if not exist "%HL%\hlm8\sound" mkdir "%HL%\hlm8\sound"
 
 copy /Y "%HERE%build\dlls\Release\hl.dll" "%HL%\hlm8\dlls\hl.dll"
 copy /Y "%HERE%build\cl_dll\Release\client.dll" "%HL%\hlm8\cl_dlls\client.dll"

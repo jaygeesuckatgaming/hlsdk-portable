@@ -19,6 +19,7 @@
 //
 
 #include "hud.h"
+#include "mate_audio.h"
 #include "cl_util.h"
 #include "netadr.h"
 #include "parsemsg.h"
@@ -223,6 +224,7 @@ the hud variables.
 void DLLEXPORT HUD_Init( void )
 {
 	InitInput();
+	MateAudio_Init();
 	gHUD.Init();
 	Scheme_Init();
 }

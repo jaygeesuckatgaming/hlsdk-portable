@@ -102,6 +102,8 @@ set (CLDLL_SOURCES
 	input_mouse.cpp
 	input_xash3d.cpp
 	interpolation.cpp
+	mate_audio.cpp
+	mate_wave.cpp
 	menu.cpp
 	message.cpp
 	MOTD.cpp

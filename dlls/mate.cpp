@@ -7,9 +7,13 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "extdll.h"
 #include "util.h"
@@ -20,13 +24,22 @@
 
 static const unsigned short MATE_PORT = 47800;
 static const unsigned char MATE_KIND_JSON = 1;
+static const unsigned char MATE_KIND_AUDIO = 2;
 static const size_t MATE_MAX_PENDING = 1u << 20;
+static const size_t MATE_MAX_AUDIO = 6u << 20;
 
 static std::mutex g_mate_lock;
 static std::deque<std::string> g_mate_outbox;
 static std::deque<std::string> g_mate_inbox;
 static volatile LONG g_mate_running = 1;
 static HANDLE g_mate_thread = NULL;
+
+static unsigned int g_msg_say = 0;
+static unsigned int g_msg_stop = 0;
+static unsigned int g_audio_rate = 24000;
+static std::string g_audio;
+static bool g_audio_done = false;
+static bool g_audio_stop = false;
 
 static void Mate_PushOut(const std::string &json)
 {
@@ -75,11 +88,31 @@ static void Mate_Parse(std::string &pending)
 		frame = 5 + (size_t)length;
 		if (pending.size() < frame)
 			break;
-		if (kind == MATE_KIND_JSON && length > 0 && g_mate_inbox.size() < 64)
+		if (kind == MATE_KIND_JSON && length > 0)
+		{
+			std::string json = pending.substr(5, length);
+			const char *rate = strstr(json.c_str(), "\"sample_rate\":");
+
+			std::lock_guard<std::mutex> lock(g_mate_lock);
+
+			if (json.find("\"audio_end\"") != std::string::npos)
+				g_audio_done = true;
+			else if (json.find("\"stop_audio\"") != std::string::npos)
+			{
+				g_audio_stop = true;
+				g_audio.clear();
+			}
+			if (rate)
+				g_audio_rate = (unsigned int)atoi(rate + 14);
+			if (g_mate_inbox.size() < 64)
+				g_mate_inbox.push_back(json);
+		}
+		else if (kind == MATE_KIND_AUDIO && length > 0)
 		{
 			std::lock_guard<std::mutex> lock(g_mate_lock);
 
-			g_mate_inbox.push_back(pending.substr(5, length));
+			if (g_audio.size() + length <= MATE_MAX_AUDIO)
+				g_audio.append(pending.data() + 5, length);
 		}
 		pending.erase(0, frame);
 	}
@@ -192,6 +225,8 @@ void Mate_Init(void)
 		return;
 
 	g_mate_running = 1;
+	g_msg_say = REG_USER_MSG("MateSay", -1);
+	g_msg_stop = REG_USER_MSG("MateStop", 1);
 	g_mate_thread = CreateThread(NULL, 0, Mate_Thread, NULL, 0, NULL);
 }
 
@@ -201,8 +236,65 @@ void Mate_SendJson(const char *json)
 		Mate_PushOut(json);
 }
 
-/* once a server frame: what came back is printed (until the voice and the actions use it),
-   and what m8 should know is sent at most twice a second */
+/* m8's voice line, as a WAV in the mod's sound folder, and its name for the client */
+static void Mate_WriteWav(const std::string &pcm, unsigned int rate, char *out, size_t out_size)
+{
+	char dir[512];
+	char path[600];
+	static unsigned int counter = 0;
+	static std::deque<std::string> files;
+	FILE *file;
+	unsigned int data_size = (unsigned int)pcm.size();
+	unsigned int riff_size = 36 + data_size;
+	unsigned int byte_rate = rate * 2;
+	unsigned int fmt_size = 16;
+	unsigned short format = 1, channels = 1, block = 2, bits = 16;
+
+	out[0] = 0;
+	GET_GAME_DIR(dir);
+	std::string sound = std::string(dir) + "\\sound";
+
+	CreateDirectoryA(sound.c_str(), NULL);
+	counter++;
+	char name[64];
+
+	snprintf(name, sizeof(name), "mate_%u.wav", counter);
+	snprintf(path, sizeof(path), "%s\\%s", sound.c_str(), name);
+
+	file = fopen(path, "wb");
+	if (!file)
+	{
+		ALERT(at_console, "[mate] could not write %s\n", path);
+		return;
+	}
+	fwrite("RIFF", 1, 4, file);
+	fwrite(&riff_size, 4, 1, file);
+	fwrite("WAVE", 1, 4, file);
+	fwrite("fmt ", 1, 4, file);
+	fwrite(&fmt_size, 4, 1, file);
+	fwrite(&format, 2, 1, file);
+	fwrite(&channels, 2, 1, file);
+	fwrite(&rate, 4, 1, file);
+	fwrite(&byte_rate, 4, 1, file);
+	fwrite(&block, 2, 1, file);
+	fwrite(&bits, 2, 1, file);
+	fwrite("data", 1, 4, file);
+	fwrite(&data_size, 4, 1, file);
+	fwrite(pcm.data(), 1, data_size, file);
+	fclose(file);
+
+	files.push_back(path);
+	while (files.size() > 16)
+	{
+		remove(files.front().c_str());
+		files.pop_front();
+	}
+
+	snprintf(out, out_size, "%s", path);
+}
+
+/* once a server frame: what came back is printed (until the actions use it), a finished
+   voice line goes to the client, and what m8 should know is sent at most twice a second */
 void Mate_Frame(void)
 {
 	std::deque<std::string> inbox;
@@ -220,6 +312,49 @@ void Mate_Frame(void)
 	}
 	for (std::deque<std::string>::iterator line = inbox.begin(); line != inbox.end(); ++line)
 		ALERT(at_console, "[mate] %s\n", line->c_str());
+
+	{
+		bool stop, done;
+		unsigned int rate;
+
+		{
+			std::lock_guard<std::mutex> lock(g_mate_lock);
+
+			stop = g_audio_stop;
+			g_audio_stop = false;
+			done = g_audio_done;
+			g_audio_done = false;
+			rate = g_audio_rate;
+		}
+		if (stop && g_msg_stop)
+		{
+			MESSAGE_BEGIN(MSG_ALL, g_msg_stop, NULL);
+			MESSAGE_END();
+		}
+		if (done && g_msg_say)
+		{
+			std::string pcm;
+			char path[600];
+
+			path[0] = 0;
+			{
+				std::lock_guard<std::mutex> lock(g_mate_lock);
+
+				pcm.swap(g_audio);
+			}
+			if (!pcm.empty())
+			{
+				Mate_WriteWav(pcm, rate ? rate : 24000, path, sizeof(path));
+				ALERT(at_console, "[mate] voice file %s\n", path[0] ? path : "(not written)");
+				if (path[0])
+				{
+					MESSAGE_BEGIN(MSG_ALL, g_msg_say, NULL);
+					WRITE_STRING(path);
+					MESSAGE_END();
+				}
+			}
+		}
+	}
 
 	map = STRING(gpGlobals->mapname);
 	if (!map || !map[0])
