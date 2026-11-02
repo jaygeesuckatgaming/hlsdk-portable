@@ -20,6 +20,7 @@
 #include "mate.h"
 
 #define MATE_NAME "Gem"
+#define MATE_TARGETNAME "gem_mate"
 #define MATE_PLAYER "Gordon"
 
 static int g_mate_index = 0;
@@ -33,26 +34,39 @@ static CBasePlayer *Mate_Player(void)
 	return (CBasePlayer *)UTIL_PlayerByIndex(1);
 }
 
+/* the mate, found by its name, so a save/load that moves its entity index can't make a
+   second one (the restored body keeps the targetname) */
 static CTalkMonster *Mate_Get(void)
 {
-	edict_t *ed;
-	CBaseEntity *ent;
+	CBaseEntity *found = NULL;
+	CBaseEntity *dead = NULL;
 
-	if (g_mate_index <= 0)
-		return NULL;
-	ed = INDEXENT(g_mate_index);
-	if (!ed || ed->free)
+	while ((found = UTIL_FindEntityByTargetname(found, MATE_TARGETNAME)) != NULL)
 	{
-		g_mate_index = 0;
-		return NULL;
+		CBaseMonster *monster = found->MyMonsterPointer();
+
+		if (!monster)
+			continue;
+		if (monster->IsAlive())
+			return (CTalkMonster *)found;
+		if (!dead)
+			dead = found;
 	}
-	ent = CBaseEntity::Instance(ed);
-	if (!ent || !ent->pev || strcmp(STRING(ent->pev->classname), "monster_barney") != 0)
+	return (CTalkMonster *)dead;
+}
+
+/* (an old save can hold more than one: keep the one in use, remove the rest) */
+static void Mate_Prune(CBaseEntity *keep)
+{
+	CBaseEntity *found = NULL;
+
+	while ((found = UTIL_FindEntityByTargetname(found, MATE_TARGETNAME)) != NULL)
 	{
-		g_mate_index = 0;
-		return NULL;
+		if (!keep)
+			keep = found;
+		else if (found != keep)
+			UTIL_Remove(found);
 	}
-	return (CTalkMonster *)ent;
 }
 
 static void Mate_Spawn(CBasePlayer *player)
@@ -62,10 +76,13 @@ static void Mate_Spawn(CBasePlayer *player)
 	float forward[3];
 	Vector origin;
 
+	if (Mate_Get())
+		return;
 	ed = CREATE_NAMED_ENTITY(MAKE_STRING("monster_barney"));
 	if (!ed)
 		return;
 	ent = CBaseEntity::Instance(ed);
+	ent->pev->targetname = MAKE_STRING(MATE_TARGETNAME);
 	g_engfuncs.pfnAngleVectors(player->pev->angles, forward, NULL, NULL);
 	origin = player->pev->origin + Vector(forward[0], forward[1], 0.0f) * 48.0f
 		+ Vector(0.0f, 0.0f, 8.0f);
@@ -95,6 +112,7 @@ void Mate_WorldFrame(void)
 {
 	CTalkMonster *mate = Mate_Get();
 	CBasePlayer *player = Mate_Player();
+	static float next_prune = 0.0f;
 
 	if (!player || !player->IsAlive())
 		return;
@@ -107,9 +125,19 @@ void Mate_WorldFrame(void)
 
 		if (!mate->IsAlive())
 		{
-			g_mate_index = 0;
-			g_mate_spawn_at = gpGlobals->time + 10.0f;
+			if (g_mate_spawn_at <= 0.0f)
+				g_mate_spawn_at = gpGlobals->time + 10.0f;
+			else if (gpGlobals->time >= g_mate_spawn_at)
+			{
+				UTIL_Remove(mate);
+				g_mate_spawn_at = 0.0f;
+			}
 			return;
+		}
+		if (gpGlobals->time >= next_prune)
+		{
+			Mate_Prune(mate);
+			next_prune = gpGlobals->time + 2.0f;
 		}
 		origin = mate->pev->origin;
 		moved = (origin - g_mate_last_origin).Length();
