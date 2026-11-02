@@ -20,6 +20,7 @@
 
 #include "hud.h"
 #include "mate_audio.h"
+#include "mate_eyes.h"
 #include "cl_util.h"
 #include "netadr.h"
 #include "parsemsg.h"
@@ -225,6 +226,7 @@ void DLLEXPORT HUD_Init( void )
 {
 	InitInput();
 	MateAudio_Init();
+	MateEyes_Init();
 	gHUD.Init();
 	Scheme_Init();
 }
@@ -240,6 +242,7 @@ redraw the HUD.
 
 int DLLEXPORT HUD_Redraw( float time, int intermission )
 {
+	MateEyes_Frame();
 	gHUD.Redraw( time, intermission );
 
 	return 1;

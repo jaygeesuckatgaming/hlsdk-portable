@@ -25,28 +25,43 @@
 static const unsigned short MATE_PORT = 47800;
 static const unsigned char MATE_KIND_JSON = 1;
 static const unsigned char MATE_KIND_AUDIO = 2;
+static const unsigned char MATE_KIND_VIEW = 4;
 static const size_t MATE_MAX_PENDING = 1u << 20;
 static const size_t MATE_MAX_AUDIO = 6u << 20;
 
 static std::mutex g_mate_lock;
-static std::deque<std::string> g_mate_outbox;
+struct Mate_Out
+{
+	unsigned char kind;
+	std::string data;
+};
+
+static std::deque<Mate_Out> g_mate_outbox;
 static std::deque<std::string> g_mate_inbox;
 static volatile LONG g_mate_running = 1;
 static HANDLE g_mate_thread = NULL;
 
 static unsigned int g_msg_say = 0;
 static unsigned int g_msg_stop = 0;
+static unsigned int g_msg_view = 0;
+static bool g_view_pending = false;
 static unsigned int g_audio_rate = 24000;
 static std::string g_audio;
 static bool g_audio_done = false;
 static bool g_audio_stop = false;
 
-static void Mate_PushOut(const std::string &json)
+static void Mate_PushOut(unsigned char kind, const std::string &data)
 {
 	std::lock_guard<std::mutex> lock(g_mate_lock);
 
 	if (g_mate_outbox.size() < 256)
-		g_mate_outbox.push_back(json);
+	{
+		Mate_Out out;
+
+		out.kind = kind;
+		out.data = data;
+		g_mate_outbox.push_back(out);
+	}
 }
 
 static bool Mate_SendAll(SOCKET socket, const char *data, size_t size)
@@ -151,7 +166,7 @@ static DWORD WINAPI Mate_Thread(LPVOID)
 
 	while (InterlockedCompareExchange(&g_mate_running, 1, 1) != 0)
 	{
-		std::deque<std::string> outbox;
+		std::deque<Mate_Out> outbox;
 		bool alive = true;
 
 		if (socket == INVALID_SOCKET)
@@ -170,9 +185,9 @@ static DWORD WINAPI Mate_Thread(LPVOID)
 
 			outbox.swap(g_mate_outbox);
 		}
-		for (std::deque<std::string>::iterator json = outbox.begin(); json != outbox.end(); ++json)
+		for (std::deque<Mate_Out>::iterator out = outbox.begin(); out != outbox.end(); ++out)
 		{
-			if (!Mate_SendFrame(socket, MATE_KIND_JSON, json->data(), json->size()))
+			if (!Mate_SendFrame(socket, out->kind, out->data.data(), out->data.size()))
 			{
 				alive = false;
 				break;
@@ -227,13 +242,71 @@ void Mate_Init(void)
 	g_mate_running = 1;
 	g_msg_say = REG_USER_MSG("MateSay", -1);
 	g_msg_stop = REG_USER_MSG("MateStop", 1);
+	g_msg_view = REG_USER_MSG("MateView", 1);
 	g_mate_thread = CreateThread(NULL, 0, Mate_Thread, NULL, 0, NULL);
 }
 
 void Mate_SendJson(const char *json)
 {
 	if (json && json[0])
-		Mate_PushOut(json);
+		Mate_PushOut(MATE_KIND_JSON, std::string(json));
+}
+
+/* m8 asks for the player's view: the RGB goes back as [u16 json length][json][rgb] */
+static void Mate_SendView(const unsigned char *rgb, unsigned int width, unsigned int height)
+{
+	char json[128];
+	int json_length;
+	std::string payload;
+
+	json_length = snprintf(json, sizeof(json),
+		"{%cwidth%c:%u,%cheight%c:%u,%cspots%c:[]}",
+		'"', '"', width, '"', '"', height, '"', '"');
+	payload.push_back((char)((json_length >> 8) & 0xff));
+	payload.push_back((char)(json_length & 0xff));
+	payload.append(json, (size_t)json_length);
+	payload.append((const char *)rgb, (size_t)width * height * 3);
+	Mate_PushOut(MATE_KIND_VIEW, payload);
+}
+
+/* the client's grab (mate_view.raw: u32 width, u32 height, RGB), if it is there yet */
+static bool Mate_ReadView(void)
+{
+	char dir[512];
+	char path[600];
+	char tmp[600];
+	FILE *file;
+	unsigned int width, height, size;
+	std::vector<unsigned char> rgb;
+
+	GET_GAME_DIR(dir);
+	snprintf(path, sizeof(path), "%s/mate_view.raw", dir);
+	snprintf(tmp, sizeof(tmp), "%s/mate_view.tmp", dir);
+	file = fopen(path, "rb");
+	if (!file)
+		file = fopen(tmp, "rb");
+	if (!file)
+		return false;
+	if (fread(&width, 4, 1, file) != 1 || fread(&height, 4, 1, file) != 1 ||
+		width == 0 || height == 0 || width > 4096 || height > 4096)
+	{
+		fclose(file);
+		remove(path);
+		return false;
+	}
+	size = width * height * 3;
+	rgb.resize(size);
+	if (fread(rgb.data(), 1, size, file) != size)
+	{
+		fclose(file);
+		remove(path);
+		return false;
+	}
+	fclose(file);
+	remove(path);
+	remove(tmp);
+	Mate_SendView(rgb.data(), width, height);
+	return true;
 }
 
 /* m8's voice line, as a WAV in the mod's sound folder, and its name for the client */
@@ -312,9 +385,21 @@ void Mate_Frame(void)
 	}
 	for (std::deque<std::string>::iterator line = inbox.begin(); line != inbox.end(); ++line)
 	{
-		ALERT(at_console, "[mate] %s\n", line->c_str());
+		bool is_view = line->size() < 40 && line->find("view") != std::string::npos;
+
+		if (!is_view)
+			ALERT(at_console, "[mate] %s\n", line->c_str());
+		if (is_view && g_msg_view)
+		{
+			g_view_pending = true;
+			MESSAGE_BEGIN(MSG_ALL, g_msg_view, NULL);
+			WRITE_BYTE(0);
+			MESSAGE_END();
+		}
 		Mate_WorldOrder(line->c_str());
 	}
+	if (g_view_pending && Mate_ReadView())
+		g_view_pending = false;
 
 	{
 		bool stop, done;

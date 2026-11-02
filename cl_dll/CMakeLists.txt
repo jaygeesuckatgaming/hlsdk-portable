@@ -104,6 +104,8 @@ set (CLDLL_SOURCES
 	interpolation.cpp
 	mate_audio.cpp
 	mate_wave.cpp
+	mate_eyes.cpp
+	mate_grab.cpp
 	menu.cpp
 	message.cpp
 	MOTD.cpp
@@ -184,6 +186,7 @@ if(WIN32)
 	target_link_libraries( ${CLDLL_LIBRARY} user32.lib )
 	if (GOLDSOURCE_SUPPORT)
 		target_link_libraries( ${CLDLL_LIBRARY} winmm.lib )
+		target_link_libraries( ${CLDLL_LIBRARY} opengl32.lib )
 	endif()
 endif()
 
