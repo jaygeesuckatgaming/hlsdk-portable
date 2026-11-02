@@ -9,6 +9,7 @@ void Mate_Init();
 void Mate_SendJson(const char *json);
 void Mate_Frame();
 
+void Mate_WorldPrecache();
 void Mate_WorldReset();
 void Mate_WorldFrame();
 void Mate_WorldOrder(const char *json);

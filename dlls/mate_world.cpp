@@ -21,6 +21,9 @@
 
 #define MATE_NAME "Gem"
 #define MATE_TARGETNAME "gem_mate"
+#define MATE_MODEL_FILE "mate_model.txt"
+#define MATE_RESPAWN_FILE "mate_respawn.txt"
+#define MATE_DEFAULT_MODEL "models/barney.mdl"
 #define MATE_PLAYER "Gordon"
 
 static int g_mate_index = 0;
@@ -28,14 +31,69 @@ static float g_mate_spawn_at = 0.0f;
 static Vector g_mate_last_origin = Vector(0.0f, 0.0f, 0.0f);
 static float g_mate_stuck_at = 0.0f;
 static bool g_mate_hold = false;
+static char g_mate_model[160] = MATE_DEFAULT_MODEL;
+static char g_mate_respawn_token[64] = "";
 
 static CBasePlayer *Mate_Player(void)
 {
 	return (CBasePlayer *)UTIL_PlayerByIndex(1);
 }
 
-/* the mate, found by its name, so a save/load that moves its entity index can't make a
-   second one (the restored body keeps the targetname) */
+/* the first line of a file in the mod's folder, trimmed (or empty) */
+static void Mate_ReadLine(const char *name, char *out, int size)
+{
+	char path[600];
+	FILE *file;
+	int length;
+
+	out[0] = 0;
+	{
+		char dir[512];
+
+		GET_GAME_DIR(dir);
+		snprintf(path, sizeof(path), "%s\\%s", dir, name);
+	}
+	file = fopen(path, "r");
+	if (!file)
+		return;
+	if (fgets(out, size, file))
+	{
+		length = (int)strlen(out);
+		while (length > 0 && (out[length - 1] == '\n' || out[length - 1] == '\r' ||
+			out[length - 1] == ' ' || out[length - 1] == '\t'))
+			out[--length] = 0;
+	}
+	fclose(file);
+}
+
+static void Mate_ReadModel(void)
+{
+	char model[160];
+
+	Mate_ReadLine(MATE_MODEL_FILE, model, sizeof(model));
+	snprintf(g_mate_model, sizeof(g_mate_model), "%s", model[0] ? model : MATE_DEFAULT_MODEL);
+}
+
+/* the models the panel can pick from without a map restart (all precached); a custom model
+   in mate_model.txt is precached too, but only when the map loads */
+void Mate_WorldPrecache(void)
+{
+	static const char *models[] = {
+		MATE_DEFAULT_MODEL,
+		"models/scientist.mdl",
+		"models/hgrunt.mdl",
+		"models/gman.mdl",
+		"models/player/gina/gina.mdl",
+		"models/player/gordon/gordon.mdl",
+	};
+	int index;
+
+	Mate_ReadModel();
+	for (index = 0; index < (int)(sizeof(models) / sizeof(models[0])); index++)
+		PRECACHE_MODEL((char *)models[index]);
+	PRECACHE_MODEL((char *)g_mate_model);
+}
+
 static CTalkMonster *Mate_Get(void)
 {
 	CBaseEntity *found = NULL;
@@ -78,6 +136,7 @@ static void Mate_Spawn(CBasePlayer *player)
 
 	if (Mate_Get())
 		return;
+	Mate_ReadModel();
 	ed = CREATE_NAMED_ENTITY(MAKE_STRING("monster_barney"));
 	if (!ed)
 		return;
@@ -89,6 +148,7 @@ static void Mate_Spawn(CBasePlayer *player)
 	ent->pev->origin = origin;
 	ent->pev->angles = player->pev->angles;
 	DispatchSpawn(ed);
+	SET_MODEL(ENT(ent->pev), (char *)g_mate_model);
 	DROP_TO_FLOOR(ENT(ent->pev));
 	((CTalkMonster *)ent)->StartFollowing(player);
 	g_mate_index = ENTINDEX(ed);
@@ -113,6 +173,27 @@ void Mate_WorldFrame(void)
 	CTalkMonster *mate = Mate_Get();
 	CBasePlayer *player = Mate_Player();
 	static float next_prune = 0.0f;
+	static float next_token = 0.0f;
+
+	if (gpGlobals->time >= next_token)
+	{
+		char token[64];
+
+		next_token = gpGlobals->time + 1.0f;
+		Mate_ReadLine(MATE_RESPAWN_FILE, token, sizeof(token));
+		if (token[0])
+		{
+			if (!g_mate_respawn_token[0])
+				snprintf(g_mate_respawn_token, sizeof(g_mate_respawn_token), "%s", token);
+			else if (strcmp(token, g_mate_respawn_token) != 0)
+			{
+				snprintf(g_mate_respawn_token, sizeof(g_mate_respawn_token), "%s", token);
+				if (mate)
+					UTIL_Remove(mate);
+				g_mate_spawn_at = 0.0f;
+			}
+		}
+	}
 
 	if (!player || !player->IsAlive())
 		return;

@@ -32,6 +32,7 @@
 #include "player.h"
 #include "weapons.h"
 #include "gamerules.h"
+#include "mate.h"
 #include "teamplay_gamerules.h"
 
 extern CGraph WorldGraph;
@@ -646,6 +647,7 @@ void CWorld::Precache( void )
 
 	// (the mate is spawned after the map loads, not by a map entity: precache it here)
 	UTIL_PrecacheOther( "monster_barney" );
+	Mate_WorldPrecache();
 }
 
 //
