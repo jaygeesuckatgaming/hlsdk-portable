@@ -17,6 +17,7 @@
 #include "util.h"
 #include "game.h"
 #include "vcs_info.h"
+#include "mate.h"
 
 static cvar_t build_commit = { "sv_game_build_commit", g_VCSInfo_Commit };
 static cvar_t build_branch = { "sv_game_build_branch", g_VCSInfo_Branch };
@@ -890,6 +891,8 @@ void GameDLLInit( void )
 // END REGISTER CVARS FOR SKILL LEVEL STUFF
 
 	CVAR_REGISTER( &sv_pushable_fixed_tick_fudge );
+
+	Mate_Init();
 
 	SERVER_COMMAND( "exec skill.cfg\n" );
 }

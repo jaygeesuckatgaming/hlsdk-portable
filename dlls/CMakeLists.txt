@@ -100,6 +100,7 @@ set (SVDLL_SOURCES
 	leech.cpp
 	lights.cpp
 	maprules.cpp
+	mate.cpp
 	monstermaker.cpp
 	monsters.cpp
 	monsterstate.cpp

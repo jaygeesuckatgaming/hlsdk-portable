@@ -38,6 +38,7 @@
 #include "weaponinfo.h"
 #include "usercmd.h"
 #include "netadr.h"
+#include "mate.h"
 #include "pm_shared.h"
 
 extern DLL_GLOBAL ULONG		g_ulModelIndexPlayer;
@@ -806,6 +807,8 @@ void ParmsChangeLevel( void )
 //
 void StartFrame( void )
 {
+	Mate_Frame();
+
 	//ALERT( at_console, "SV_Physics( %g, frametime %g )\n", gpGlobals->time, gpGlobals->frametime );
 
 	if( g_pGameRules )
