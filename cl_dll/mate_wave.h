@@ -4,3 +4,4 @@
 
 bool MateWave_Play(const char *path);
 void MateWave_Stop(void);
+void MateWave_SetDeviceFile(const char *path);

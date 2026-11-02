@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <mmsystem.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <vector>
 
@@ -12,6 +13,80 @@ static HWAVEOUT g_wave = NULL;
 static WAVEHDR g_header;
 static std::vector<char> g_samples;
 static bool g_prepared = false;
+static char g_device_file[260] = "";
+
+void MateWave_SetDeviceFile(const char *path)
+{
+	if (path && path[0])
+		snprintf(g_device_file, sizeof(g_device_file), "%s", path);
+	else
+		g_device_file[0] = 0;
+}
+
+static int MateWave_Lower(int c)
+{
+	return (c >= 'A' && c <= 'Z') ? c + 32 : c;
+}
+
+static int MateWave_Contains(const char *haystack, const char *needle)
+{
+	size_t length = strlen(needle);
+	size_t i;
+
+	if (!length)
+		return 1;
+	for (; *haystack; haystack++)
+	{
+		for (i = 0; i < length; i++)
+		{
+			if (!haystack[i] || MateWave_Lower(haystack[i]) != MateWave_Lower(needle[i]))
+				break;
+		}
+		if (i == length)
+			return 1;
+	}
+	return 0;
+}
+
+/* the device named in the file (a number, or part of its name), else the system default */
+static UINT MateWave_Device(void)
+{
+	char name[128] = "";
+	FILE *file;
+	UINT count;
+	UINT index;
+
+	if (g_device_file[0])
+	{
+		file = fopen(g_device_file, "r");
+		if (file)
+		{
+			if (fgets(name, sizeof(name), file))
+			{
+				size_t length = strlen(name);
+
+				while (length > 0 && (name[length - 1] == '\n' || name[length - 1] == '\r' ||
+					name[length - 1] == ' ' || name[length - 1] == '\t'))
+					name[--length] = 0;
+			}
+			fclose(file);
+		}
+	}
+	if (!name[0] || MateWave_Contains(name, "default"))
+		return WAVE_MAPPER;
+	if (name[0] >= '0' && name[0] <= '9')
+		return (UINT)atoi(name);
+	count = waveOutGetNumDevs();
+	for (index = 0; index < count; index++)
+	{
+		WAVEOUTCAPSA caps;
+
+		if (waveOutGetDevCapsA(index, &caps, sizeof(caps)) == MMSYSERR_NOERROR &&
+			MateWave_Contains(caps.szPname, name))
+			return index;
+	}
+	return WAVE_MAPPER;
+}
 
 void MateWave_Stop(void)
 {
@@ -82,7 +157,7 @@ bool MateWave_Play(const char *path)
 	if (format.nSamplesPerSec == 0 || !data || data_size == 0)
 		return false;
 
-	if (waveOutOpen(&g_wave, WAVE_MAPPER, &format, 0, 0, CALLBACK_NULL) != MMSYSERR_NOERROR)
+	if (waveOutOpen(&g_wave, MateWave_Device(), &format, 0, 0, CALLBACK_NULL) != MMSYSERR_NOERROR)
 	{
 		g_wave = NULL;
 		return false;

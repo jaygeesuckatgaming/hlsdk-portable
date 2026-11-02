@@ -3,6 +3,8 @@
 // The server writes each line to a WAV in the mod's sound folder and sends its full path in a
 // MateSay user message; MateStop stops it. The playback itself is in mate_wave.cpp.
 
+#include <stdio.h>
+
 #include "hud.h"
 #include "cl_util.h"
 #include "parsemsg.h"
@@ -35,6 +37,12 @@ int __MsgFunc_MateStop(const char *pszName, int iSize, void *pbuf)
 
 void MateAudio_Init(void)
 {
+	char device[260];
+	const char *game = gEngfuncs.pfnGetGameDirectory();
+
+	snprintf(device, sizeof(device), "%s/mate_audio_device.txt",
+		game && game[0] ? game : "hlm8");
+	MateWave_SetDeviceFile(device);
 	MateWave_Stop();
 	HOOK_MESSAGE(MateSay);
 	HOOK_MESSAGE(MateStop);
