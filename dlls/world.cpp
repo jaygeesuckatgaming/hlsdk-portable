@@ -643,6 +643,9 @@ void CWorld::Precache( void )
 	{
 		CVAR_SET_FLOAT( "mp_defaultteam", 0.0f );
 	}
+
+	// (the mate is spawned after the map loads, not by a map entity: precache it here)
+	UTIL_PrecacheOther( "monster_barney" );
 }
 
 //

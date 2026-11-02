@@ -311,7 +311,10 @@ void Mate_Frame(void)
 		inbox.swap(g_mate_inbox);
 	}
 	for (std::deque<std::string>::iterator line = inbox.begin(); line != inbox.end(); ++line)
+	{
 		ALERT(at_console, "[mate] %s\n", line->c_str());
+		Mate_WorldOrder(line->c_str());
+	}
 
 	{
 		bool stop, done;
@@ -359,17 +362,20 @@ void Mate_Frame(void)
 	map = STRING(gpGlobals->mapname);
 	if (!map || !map[0])
 		return;
+
+	if (last_map[0] != 0 && strcmp(last_map, map) != 0)
+		Mate_WorldReset();
+	Mate_WorldFrame();
+
 	if (gpGlobals->time < next_state)
 		return;
 	next_state = gpGlobals->time + 0.5;
 
 	{
-		char state[512];
+		char state[4096];
 
-		snprintf(state, sizeof(state),
-			"{\"type\":\"state\",\"game\":\"Half-Life\",\"player_name\":\"Gordon\","
-			"\"level\":\"%s\",\"state\":\"standing in %s\"}", map, map);
-		Mate_SendJson(state);
+		if (Mate_WorldState(state, sizeof(state)))
+			Mate_SendJson(state);
 	}
 
 	if (strcmp(last_map, map) != 0)
